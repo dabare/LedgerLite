@@ -12,7 +12,8 @@ const navItems = [
   ["purchases", "▧", "Purchases"],
   ["expenses", "◌", "Expenses"],
   ["inventory", "▦", "Inventory"],
-  ["reports", "◫", "Reports"]
+  ["reports", "◫", "Reports"],
+  ["settings", "⚙", "Settings"]
 ];
 
 let db;
@@ -141,8 +142,6 @@ function renderShell() {
   });
   $("#menuBtn").addEventListener("click", () => document.body.classList.add("nav-open"));
   $("#drawerBackdrop").addEventListener("click", () => document.body.classList.remove("nav-open"));
-  $("#backupBtn").addEventListener("click", exportJson);
-  $("#restoreInput").addEventListener("change", importJson);
 }
 
 function render() {
@@ -161,7 +160,8 @@ function render() {
     purchases: renderPurchases,
     expenses: renderExpenses,
     inventory: renderInventory,
-    reports: renderReports
+    reports: renderReports,
+    settings: renderSettings
   };
   renderers[state.view]();
 }
@@ -774,6 +774,38 @@ function renderReports() {
       </section>
     </div>
   `;
+}
+
+function renderSettings() {
+  view.innerHTML = `
+    <div class="grid cols-2">
+      <section class="card">
+        <h2>Backup and restore</h2>
+        <p class="muted">Export all local app data as JSON, or import a previous backup into this browser.</p>
+        <div class="toolbar-actions">
+          <button id="settingsBackupBtn" class="secondary" type="button">Export JSON</button>
+          <label class="primary file-action">
+            Import JSON
+            <input id="settingsRestoreInput" type="file" accept="application/json">
+          </label>
+        </div>
+      </section>
+      <section class="card">
+        <h2>Offline app</h2>
+        <p class="muted">Install this PWA to run it in its own app window. Data remains local to this browser profile.</p>
+        <div class="toolbar-actions">
+          <button id="settingsInstallBtn" class="secondary ${deferredInstallPrompt ? "" : "hidden"}" type="button">Install app</button>
+        </div>
+      </section>
+    </div>
+    <section class="card" style="margin-top:16px">
+      <h2>Local data</h2>
+      ${table(["Data type", "Records"], STORES.map(store => [esc(store), String(state.data[store].length)]))}
+    </section>
+  `;
+  $("#settingsBackupBtn").addEventListener("click", exportJson);
+  $("#settingsRestoreInput").addEventListener("change", importJson);
+  $("#settingsInstallBtn")?.addEventListener("click", installApp);
 }
 
 function topProducts() {
@@ -1463,14 +1495,18 @@ function setupPwa() {
     event.preventDefault();
     deferredInstallPrompt = event;
     $("#installBtn").classList.remove("hidden");
+    $("#settingsInstallBtn")?.classList.remove("hidden");
   });
-  $("#installBtn").addEventListener("click", async () => {
-    if (!deferredInstallPrompt) return;
-    deferredInstallPrompt.prompt();
-    await deferredInstallPrompt.userChoice;
-    deferredInstallPrompt = null;
-    $("#installBtn").classList.add("hidden");
-  });
+  $("#installBtn").addEventListener("click", installApp);
+}
+
+async function installApp() {
+  if (!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+  $("#installBtn").classList.add("hidden");
+  $("#settingsInstallBtn")?.classList.add("hidden");
 }
 
 window.addEventListener("error", event => {

@@ -1,6 +1,7 @@
-const CACHE_NAME = "ledgerlite-v13";
+const CACHE_NAME = "ledgerlite-v15";
+const APP_SHELL = "./index.html";
 const ASSETS = [
-  "./index.html",
+  APP_SHELL,
   "./styles.css",
   "./app.js",
   "./manifest.webmanifest",
@@ -10,41 +11,56 @@ const ASSETS = [
 ];
 
 self.addEventListener("install", event => {
-  event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS)));
+  event.waitUntil(
+    caches.open(CACHE_NAME).then(cache =>
+      cache.addAll(ASSETS.map(asset => new Request(asset, { cache: "reload" })))
+    )
+  );
   self.skipWaiting();
 });
 
 self.addEventListener("activate", event => {
   event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key)))
-    )
+    Promise.all([
+      caches.keys().then(keys =>
+        Promise.all(keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key)))
+      ),
+      self.clients.claim()
+    ])
   );
-  self.clients.claim();
 });
+
+async function cachedAppShell() {
+  const cache = await caches.open(CACHE_NAME);
+  return cache.match(APP_SHELL) || cache.match(new URL(APP_SHELL, self.location).href);
+}
+
+async function cacheFirst(request) {
+  const cached = await caches.match(request);
+  if (cached && !cached.redirected) return cached;
+  try {
+    const response = await fetch(request);
+    if (response.ok && !response.redirected) {
+      const cache = await caches.open(CACHE_NAME);
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch (error) {
+    return cached || cachedAppShell();
+  }
+}
 
 self.addEventListener("fetch", event => {
   if (event.request.method !== "GET") return;
+
   if (event.request.mode === "navigate") {
     event.respondWith(
-      fetch(event.request)
-        .then(response => response.redirected ? caches.match("./index.html") : response)
-        .catch(() => caches.match("./index.html"))
+      cachedAppShell().then(cached =>
+        cached || fetch(event.request).catch(() => Response.error())
+      )
     );
     return;
   }
-  event.respondWith(
-    caches.match(event.request).then(cached => {
-      if (cached) return cached;
-      return fetch(event.request)
-        .then(response => {
-          if (response.ok && !response.redirected) {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy));
-          }
-          return response;
-        })
-        .catch(() => caches.match("./index.html"));
-    })
-  );
+
+  event.respondWith(cacheFirst(event.request));
 });
