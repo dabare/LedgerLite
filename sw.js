@@ -1,4 +1,4 @@
-const CACHE_NAME = "ledgerlite-v15";
+const CACHE_NAME = "ledgerlite-v16";
 const APP_SHELL = "./index.html";
 const ASSETS = [
   APP_SHELL,
@@ -12,9 +12,14 @@ const ASSETS = [
 
 self.addEventListener("install", event => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache =>
-      cache.addAll(ASSETS.map(asset => new Request(asset, { cache: "reload" })))
-    )
+    caches.open(CACHE_NAME).then(async cache => {
+      await cache.addAll(ASSETS.map(asset => new Request(asset, { cache: "reload" })));
+      const shell = await fetch(new Request(APP_SHELL, { cache: "reload" }));
+      if (shell.ok && !shell.redirected) {
+        await cache.put(new Request("./"), shell.clone());
+        await cache.put(new Request(self.registration.scope), shell.clone());
+      }
+    })
   );
   self.skipWaiting();
 });
@@ -32,7 +37,10 @@ self.addEventListener("activate", event => {
 
 async function cachedAppShell() {
   const cache = await caches.open(CACHE_NAME);
-  return cache.match(APP_SHELL) || cache.match(new URL(APP_SHELL, self.location).href);
+  return await cache.match(APP_SHELL)
+    || await cache.match(new URL(APP_SHELL, self.location).href)
+    || await cache.match("./")
+    || await cache.match(self.registration.scope);
 }
 
 async function cacheFirst(request) {
@@ -56,7 +64,10 @@ self.addEventListener("fetch", event => {
   if (event.request.mode === "navigate") {
     event.respondWith(
       cachedAppShell().then(cached =>
-        cached || fetch(event.request).catch(() => Response.error())
+        cached || fetch(event.request).catch(() => new Response("Offline app shell is not cached yet. Open the app once while online.", {
+          status: 503,
+          headers: { "Content-Type": "text/plain" }
+        }))
       )
     );
     return;
