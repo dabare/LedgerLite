@@ -1,4 +1,4 @@
-const CACHE_NAME = "ledgerlite-v8";
+const CACHE_NAME = "ledgerlite-v12";
 const ASSETS = [
   "./",
   "./index.html",

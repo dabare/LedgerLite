@@ -7,7 +7,7 @@ const navItems = [
   ["dashboard", "◧", "Dashboard"],
   ["customers", "◎", "Customers"],
   ["suppliers", "◇", "Suppliers"],
-  ["products", "□", "Products/services"],
+  ["products", "□", "Products/services/made"],
   ["invoices", "▤", "Invoices & payments"],
   ["purchases", "▧", "Purchases"],
   ["expenses", "◌", "Expenses"],
@@ -209,10 +209,48 @@ function productName(id) {
   return state.data.products.find(product => product.id === id)?.name || "Custom item";
 }
 
+function isService(product) {
+  return product?.type === "Service";
+}
+
+function isMadeProduct(product) {
+  return product?.type === "Made Product" || (!isService(product) && (product?.components || []).length > 0);
+}
+
+function isStockProduct(product) {
+  return !isService(product) && !isMadeProduct(product);
+}
+
+function productTypeLabel(product) {
+  if (isService(product)) return "Service";
+  if (isMadeProduct(product)) return "Made Product";
+  return "Product";
+}
+
+function productStock(product) {
+  return productStockValue(product, new Set());
+}
+
+function productStockValue(product, seen) {
+  if (isService(product)) return 0;
+  if (!isMadeProduct(product)) return num(product.stock);
+  if (!product?.id || seen.has(product.id)) return 0;
+  seen.add(product.id);
+  const components = product.components || [];
+  if (!components.length) return 0;
+  const possible = components.map(component => {
+    const componentProduct = state.data.products.find(record => record.id === component.productId);
+    const qtyNeeded = num(component.qty);
+    if (!componentProduct || qtyNeeded <= 0) return 0;
+    return Math.floor(productStockValue(componentProduct, new Set(seen)) / qtyNeeded);
+  });
+  return possible.length ? Math.min(...possible) : 0;
+}
+
 function productOptionsHtml(excludeId = "") {
   return state.data.products
-    .filter(product => product.type !== "Service" && product.id !== excludeId)
-    .map(product => `<option value="${product.id}">${esc(product.name)} (${esc(product.stock || 0)} on hand)</option>`)
+    .filter(product => isStockProduct(product) && product.id !== excludeId)
+    .map(product => `<option value="${product.id}">${esc(product.name)} (${esc(productStock(product))} on hand)</option>`)
     .join("");
 }
 
@@ -251,6 +289,17 @@ function purchaseStatus(purchase) {
   return "Unpaid";
 }
 
+function purchaseReceiveStatus(purchase) {
+  if (!purchase) return "Ordered";
+  return purchase.receiveStatus || "Received";
+}
+
+function receiveStatusPill(purchase) {
+  const status = purchaseReceiveStatus(purchase);
+  const tone = status === "Received" ? "ok" : "warn";
+  return `<span class="pill ${tone}">${esc(status)}</span>`;
+}
+
 function purchaseTotalForPeriod(fromDate = null) {
   return state.data.purchases
     .filter(purchase => !fromDate || purchase.date >= fromDate)
@@ -268,7 +317,7 @@ function overdueInvoices() {
 }
 
 function lowStockProducts() {
-  return state.data.products.filter(product => product.type !== "Service" && num(product.stock) <= num(product.minStock));
+  return state.data.products.filter(product => !isService(product) && productStock(product) <= num(product.minStock));
 }
 
 function renderDashboard() {
@@ -475,13 +524,14 @@ function renderProducts() {
 
 function productTable(products, actions = true) {
   return table(["Item", "Type", "Price", "Stock", "Minimum", "Recipe", actions ? "" : "Status"], products.map(product => {
-    const isLow = product.type !== "Service" && num(product.stock) <= num(product.minStock);
+    const stock = productStock(product);
+    const isLow = !isService(product) && stock <= num(product.minStock);
     return [
       `<strong>${esc(product.name)}</strong><br><span class="muted">${esc(product.sku || "No SKU")} ${product.category ? " · " + esc(product.category) : ""}</span>`,
-      esc(product.type || "Product"),
+      esc(productTypeLabel(product)),
       money(product.price),
-      product.type === "Service" ? "Not stocked" : esc(product.stock || 0),
-      product.type === "Service" ? "-" : esc(product.minStock || 0),
+      isService(product) ? "Not stocked" : `${esc(stock)}${isMadeProduct(product) ? " available" : ""}`,
+      isService(product) ? "-" : esc(product.minStock || 0),
       esc(recipeText(product)),
       actions ? rowActions("product", product.id) : (isLow ? `<span class="pill warn">Low stock</span>` : `<span class="pill ok">OK</span>`)
     ];
@@ -547,10 +597,21 @@ function renderPurchases() {
     openPurchaseModal(state.data.purchases.find(purchase => purchase.id === button.dataset.editPurchase));
   }));
   view.querySelectorAll("[data-pay-purchase]").forEach(button => button.addEventListener("click", () => openPurchasePaymentModal(button.dataset.payPurchase)));
+  view.querySelectorAll("[data-receive-purchase]").forEach(button => button.addEventListener("click", async () => {
+    const purchase = state.data.purchases.find(item => item.id === button.dataset.receivePurchase);
+    if (!purchase || !confirm("Mark this purchase as received and add its items to inventory?")) return;
+    purchase.receiveStatus = "Received";
+    purchase.receivedAt = new Date().toISOString();
+    await put("purchases", purchase);
+    await applyPurchaseStock(purchase, 1);
+    await loadData();
+    render();
+    showToast("Purchase received and inventory updated");
+  }));
   view.querySelectorAll("[data-delete-purchase]").forEach(button => button.addEventListener("click", async () => {
     const purchase = state.data.purchases.find(item => item.id === button.dataset.deletePurchase);
-    if (!purchase || !confirm("Delete this purchase and remove its stock quantities?")) return;
-    await applyPurchaseStock(purchase, -1);
+    if (!purchase || !confirm("Delete this purchase? Received orders will remove their stock quantities.")) return;
+    if (purchaseReceiveStatus(purchase) === "Received") await applyPurchaseStock(purchase, -1);
     await remove("purchases", purchase.id);
     await loadData();
     render();
@@ -559,19 +620,21 @@ function renderPurchases() {
 }
 
 function purchaseTable(purchases, actions = true) {
-  return table(["Purchase", "Supplier", "Items", "Date", "Total", "Paid", "Status", actions ? "" : "Due"], purchases.map(purchase => {
+  return table(["Purchase", "Supplier", "Items", "Date", "Received", "Total", "Paid", "Status", actions ? "" : "Due"], purchases.map(purchase => {
     const status = purchaseStatus(purchase);
     return [
       `<strong>${esc(purchase.number)}</strong><br><span class="muted">Due ${esc(purchase.dueDate || "-")}</span>`,
       esc(supplierName(purchase.supplierId)),
       esc(purchaseItemsText(purchase)),
       esc(purchase.date || "-"),
+      receiveStatusPill(purchase),
       money(purchaseTotal(purchase)),
       money(purchasePaid(purchase)),
       statusPill(status),
       actions ? `
         <div class="inline-actions">
           <button class="secondary" type="button" data-edit-purchase="${purchase.id}">Edit</button>
+          ${purchaseReceiveStatus(purchase) === "Received" ? "" : `<button class="primary" type="button" data-receive-purchase="${purchase.id}">Receive</button>`}
           <button class="secondary" type="button" data-pay-purchase="${purchase.id}">Payment</button>
           <button class="danger" type="button" data-delete-purchase="${purchase.id}">Delete</button>
         </div>` : money(purchaseTotal(purchase) - purchasePaid(purchase))
@@ -628,7 +691,7 @@ function expenseCategorySummary(fromDate = null) {
 }
 
 function renderInventory() {
-  const products = state.data.products.filter(product => product.type !== "Service");
+  const products = state.data.products.filter(product => !isService(product));
   const moves = [...state.data.inventoryMoves].sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 12);
   view.innerHTML = `
     <div class="toolbar">
@@ -664,7 +727,7 @@ function renderReports() {
   const monthStart = today().slice(0, 8) + "01";
   const receivables = state.data.invoices.reduce((sum, invoice) => sum + Math.max(0, invoiceTotal(invoice) - invoicePaid(invoice)), 0);
   const payables = state.data.purchases.reduce((sum, purchase) => sum + Math.max(0, purchaseTotal(purchase) - purchasePaid(purchase)), 0);
-  const stockValue = state.data.products.reduce((sum, product) => sum + num(product.stock) * num(product.cost), 0);
+  const stockValue = state.data.products.reduce((sum, product) => sum + productStock(product) * num(product.cost), 0);
   const topItems = topProducts();
   view.innerHTML = `
     <div class="grid cols-4">
@@ -841,9 +904,10 @@ function openSupplierModal(supplier = {}) {
 
 function openProductModal(product = {}) {
   const componentOptions = productOptionsHtml(product.id);
+  const selectedType = product.id ? productTypeLabel(product) : "Product";
   openModal(product.id ? "Edit product/service" : "Add product/service", `
     <div class="form-grid">
-      ${selectField("type", "Type", product.type || "Product", ["Product", "Service"])}
+      ${selectField("type", "Type", selectedType, ["Product", "Made Product", "Service"])}
       ${field("name", "Name", product.name || "", "text", "required")}
       ${field("sku", "SKU", product.sku || "")}
       ${field("category", "Category", product.category || "")}
@@ -859,11 +923,8 @@ function openProductModal(product = {}) {
       <button class="secondary" type="button" data-add-component ${componentOptions ? "" : "disabled"}>Add component</button>
     </div>
   `, async form => {
-    const components = [...modalRoot.querySelectorAll(".component-line-item")].map(row => ({
-      productId: row.querySelector("[name='componentProduct']").value,
-      qty: num(row.querySelector("[name='componentQty']").value)
-    })).filter(component => component.productId && component.qty > 0);
-    await put("products", {
+    const components = readProductComponents();
+    const savedProduct = {
       id: product.id || uid("prd"),
       type: form.get("type"),
       name: form.get("name").trim(),
@@ -871,12 +932,14 @@ function openProductModal(product = {}) {
       category: form.get("category").trim(),
       price: num(form.get("price")),
       cost: num(form.get("cost")),
-      stock: form.get("type") === "Service" ? 0 : num(form.get("stock")),
+      stock: form.get("type") === "Service" || form.get("type") === "Made Product" ? 0 : num(form.get("stock")),
       minStock: form.get("type") === "Service" ? 0 : num(form.get("minStock")),
       components: form.get("type") === "Service" ? [] : components,
       notes: form.get("notes").trim(),
       createdAt: product.createdAt || new Date().toISOString()
-    });
+    };
+    await put("products", savedProduct);
+    if (product.id) await backfillRecipeStock(product, savedProduct);
     showToast("Product/service saved");
   });
   const componentItems = modalRoot.querySelector("#componentItems");
@@ -884,17 +947,83 @@ function openProductModal(product = {}) {
     if (!componentOptions) return;
     const row = document.createElement("div");
     row.className = "line-item component-line-item";
+    row.dataset.componentRow = "true";
     row.innerHTML = `
-      <div class="field"><label>Component product</label><select name="componentProduct">${componentOptions}</select></div>
-      <div class="field"><label>Qty used</label><input name="componentQty" type="number" min="0" step="0.01" value="${esc(component.qty || 1)}"></div>
+      <div class="field"><label>Component product</label><select data-component-product>${componentOptions}</select></div>
+      <div class="field"><label>Qty used</label><input data-component-qty type="number" min="0" step="any" inputmode="decimal" value="${esc(component.qty || 1)}"></div>
       <button class="danger icon-button" type="button" aria-label="Remove component">×</button>
     `;
-    row.querySelector("[name='componentProduct']").value = component.productId || row.querySelector("[name='componentProduct']").value;
+    row.querySelector("[data-component-product]").value = component.productId || row.querySelector("[data-component-product]").value;
     row.querySelector("button").addEventListener("click", () => row.remove());
     componentItems.appendChild(row);
   };
   modalRoot.querySelector("[data-add-component]")?.addEventListener("click", () => addComponent());
   (product.components || []).forEach(addComponent);
+}
+
+function readProductComponents() {
+  return [...modalRoot.querySelectorAll("[data-component-row]")].map(row => ({
+    productId: row.querySelector("[data-component-product]")?.value || "",
+    qty: num(row.querySelector("[data-component-qty]")?.value)
+  })).filter(component => component.productId && component.qty > 0);
+}
+
+async function backfillRecipeStock(oldProduct, newProduct) {
+  const soldQty = state.data.invoices.reduce((sum, invoice) => {
+    return sum + (invoice.items || [])
+      .filter(item => item.productId === newProduct.id)
+      .reduce((itemSum, item) => itemSum + num(item.qty), 0);
+  }, 0);
+  if (!soldQty) return;
+
+  const oldComponents = componentMap(oldProduct.components || []);
+  const newComponents = componentMap(newProduct.components || []);
+  const componentIds = new Set([...oldComponents.keys(), ...newComponents.keys()]);
+
+  const oldOwnTracked = oldProduct?.type !== "Service" && oldProduct?.type !== "Made Product";
+  const newOwnTracked = !isService(newProduct) && !isMadeProduct(newProduct);
+  const ownAdjustment = (oldOwnTracked ? soldQty : 0) - (newOwnTracked ? soldQty : 0);
+  if (ownAdjustment) {
+    await applyStockMove(newProduct, ownAdjustment, today(), `Type updated for ${newProduct.name}`);
+  }
+
+  for (const componentId of componentIds) {
+    const componentProduct = state.data.products.find(record => record.id === componentId);
+    if (!componentProduct || !isStockProduct(componentProduct)) continue;
+    const oldUsed = soldQty * (oldComponents.get(componentId) || 0);
+    const newUsed = soldQty * (newComponents.get(componentId) || 0);
+    const adjustment = oldUsed - newUsed;
+    if (!adjustment) continue;
+    await applyStockMove(componentProduct, adjustment, today(), `Recipe updated for ${newProduct.name}`);
+  }
+  await updateInvoiceRecipeSnapshots(newProduct);
+}
+
+function componentMap(components) {
+  const map = new Map();
+  for (const component of components || []) {
+    map.set(component.productId, (map.get(component.productId) || 0) + num(component.qty));
+  }
+  return map;
+}
+
+async function updateInvoiceRecipeSnapshots(product) {
+  for (const invoice of state.data.invoices) {
+    let changed = false;
+    const items = (invoice.items || []).map(item => {
+      if (item.productId !== product.id) return item;
+      changed = true;
+      return { ...item, components: cloneComponents(product.components || []) };
+    });
+    if (changed) await put("invoices", { ...invoice, items });
+  }
+}
+
+function cloneComponents(components) {
+  return (components || []).map(component => ({
+    productId: component.productId,
+    qty: num(component.qty)
+  }));
 }
 
 function openExpenseModal(expense = {}) {
@@ -926,7 +1055,7 @@ function openInvoiceModal(invoice = {}) {
   const customerOptions = [`<option value="">Walk-in customer</option>`]
     .concat(state.data.customers.map(customer => `<option value="${customer.id}">${esc(customer.name)}</option>`)).join("");
   const productOptions = [`<option value="">Custom item</option>`]
-    .concat(state.data.products.map(product => `<option value="${product.id}" data-price="${product.price}">${esc(product.name)} (${esc(product.type)})</option>`)).join("");
+    .concat(state.data.products.map(product => `<option value="${product.id}" data-price="${product.price}">${esc(product.name)} (${esc(productTypeLabel(product))}, ${esc(productStock(product))} available)</option>`)).join("");
 
   openModal(invoice.id ? "Edit invoice" : "New invoice", `
     <div class="form-grid">
@@ -963,7 +1092,8 @@ function openInvoiceModal(invoice = {}) {
         description: product?.name || row.querySelector("[name='lineDescription']").value.trim() || "Custom item",
         qty: num(row.querySelector("[name='lineQty']").value),
         price: num(row.querySelector("[name='linePrice']").value),
-        discount: num(row.querySelector("[name='lineDiscount']").value)
+        discount: num(row.querySelector("[name='lineDiscount']").value),
+        components: cloneComponents(product?.components || [])
       };
     }).filter(item => item.qty > 0 && item.price >= 0);
     if (!items.length) throw new Error("Invoice needs at least one line item.");
@@ -1036,7 +1166,7 @@ function openInvoiceModal(invoice = {}) {
 }
 
 function openPurchaseModal(purchase = {}) {
-  const stockedProducts = state.data.products.filter(product => product.type !== "Service");
+  const stockedProducts = state.data.products.filter(isStockProduct);
   if (!stockedProducts.length) {
     showToast("Add a stocked product before recording a purchase");
     setPage("products");
@@ -1045,7 +1175,7 @@ function openPurchaseModal(purchase = {}) {
   const supplierOptions = [`<option value="">No supplier selected</option>`]
     .concat(state.data.suppliers.map(supplier => `<option value="${supplier.id}">${esc(supplier.name)}</option>`)).join("");
   const productOptions = stockedProducts
-    .map(product => `<option value="${product.id}" data-cost="${product.cost}">${esc(product.name)} (${esc(product.stock || 0)} on hand)</option>`).join("");
+    .map(product => `<option value="${product.id}" data-cost="${product.cost}">${esc(product.name)} (${esc(productStock(product))} on hand)</option>`).join("");
 
   openModal(purchase.id ? "Edit supplier purchase" : "Record supplier purchase", `
     <div class="form-grid">
@@ -1053,6 +1183,7 @@ function openPurchaseModal(purchase = {}) {
       <div class="field"><label for="supplierId">Supplier</label><select id="supplierId" name="supplierId">${supplierOptions}</select></div>
       ${field("date", "Purchase date", purchase.date || today(), "date", "required")}
       ${field("dueDate", "Payment due date", purchase.dueDate || addDays(14), "date")}
+      ${selectField("receiveStatus", "Order received", purchase.id ? purchaseReceiveStatus(purchase) : "Ordered", ["Ordered", "Received"])}
     </div>
     <div>
       <h3>Items bought</h3>
@@ -1090,19 +1221,23 @@ function openPurchaseModal(purchase = {}) {
       items,
       paid: Math.min(num(form.get("paid")), total),
       method: form.get("method"),
+      receiveStatus: form.get("receiveStatus"),
+      receivedAt: form.get("receiveStatus") === "Received" ? (form.get("receivedAt") || new Date().toISOString()) : "",
       notes: form.get("notes").trim(),
       paymentNotes: form.get("paymentNotes") || "",
       createdAt: form.get("createdAt") || new Date().toISOString()
     };
-    if (form.get("id")) await applyPurchaseStock(state.data.purchases.find(item => item.id === form.get("id")), -1);
+    const oldPurchase = state.data.purchases.find(item => item.id === form.get("id"));
+    if (form.get("id") && purchaseReceiveStatus(oldPurchase) === "Received") await applyPurchaseStock(oldPurchase, -1);
     await put("purchases", purchase);
-    await applyPurchaseStock(purchase, 1);
-    showToast(purchase.id === form.get("id") ? "Purchase updated and stock recalculated" : "Purchase saved and stock increased");
+    if (purchaseReceiveStatus(purchase) === "Received") await applyPurchaseStock(purchase, 1);
+    showToast(purchaseReceiveStatus(purchase) === "Received" ? "Purchase saved and inventory updated" : "Purchase saved as ordered");
   });
   modalRoot.querySelector(".form").insertAdjacentHTML("beforeend", `
     <input type="hidden" name="id" value="${esc(purchase.id || "")}">
     <input type="hidden" name="createdAt" value="${esc(purchase.createdAt || "")}">
     <input type="hidden" name="paymentNotes" value="${esc(purchase.paymentNotes || "")}">
+    <input type="hidden" name="receivedAt" value="${esc(purchase.receivedAt || "")}">
   `);
   modalRoot.querySelector("[name='supplierId']").value = purchase.supplierId || "";
 
@@ -1175,12 +1310,15 @@ async function applyInvoiceStock(invoice, direction) {
   if (!invoice) return;
   for (const item of invoice.items || []) {
     const product = state.data.products.find(record => record.id === item.productId);
-    if (!product || product.type === "Service") continue;
+    if (!product || isService(product)) continue;
     const qty = num(item.qty) * direction;
-    await applyStockMove(product, qty, today(), `${direction < 0 ? "Sold on" : "Restored from"} ${invoice.number}`);
-    for (const component of product.components || []) {
+    if (!isMadeProduct(product)) {
+      await applyStockMove(product, qty, today(), `${direction < 0 ? "Sold on" : "Restored from"} ${invoice.number}`);
+    }
+    const components = item.components || product.components || [];
+    for (const component of components) {
       const componentProduct = state.data.products.find(record => record.id === component.productId);
-      if (!componentProduct || componentProduct.type === "Service") continue;
+      if (!componentProduct || !isStockProduct(componentProduct)) continue;
       const componentQty = num(item.qty) * num(component.qty) * direction;
       await applyStockMove(componentProduct, componentQty, today(), `${direction < 0 ? "Used for" : "Restored from"} ${product.name} on ${invoice.number}`);
     }
@@ -1204,7 +1342,7 @@ async function applyPurchaseStock(purchase, direction) {
   if (!purchase) return;
   for (const item of purchase.items || []) {
     const product = state.data.products.find(record => record.id === item.productId);
-    if (!product || product.type === "Service") continue;
+    if (!product || !isStockProduct(product)) continue;
     const qty = num(item.qty) * direction;
     if (direction > 0) product.cost = num(item.cost);
     await applyStockMove(product, qty, purchase.date || today(), `${direction > 0 ? "Bought on" : "Removed from"} ${purchase.number}`);
@@ -1250,12 +1388,12 @@ function openPurchasePaymentModal(purchaseId) {
 }
 
 function openStockModal() {
-  const products = state.data.products.filter(product => product.type !== "Service");
+  const products = state.data.products.filter(isStockProduct);
   if (!products.length) {
     showToast("Add a stocked product first");
     return;
   }
-  const options = products.map(product => `<option value="${product.id}">${esc(product.name)} (${esc(product.stock || 0)} on hand)</option>`).join("");
+  const options = products.map(product => `<option value="${product.id}">${esc(product.name)} (${esc(productStock(product))} on hand)</option>`).join("");
   openModal("Adjust stock", `
     <div class="form-grid">
       <div class="field"><label for="productId">Product</label><select id="productId" name="productId">${options}</select></div>
