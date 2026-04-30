@@ -2,7 +2,7 @@
   "name": "LedgerLite Business",
   "short_name": "LedgerLite",
   "description": "A fully offline small business management app with local browser storage.",
-  "start_url": "./index.html",
+  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#f7faf9",

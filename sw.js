@@ -1,5 +1,5 @@
-const CACHE_NAME = "ledgerlite-v17";
-const APP_SHELL = new URL("./index.html", self.registration.scope).href;
+const CACHE_NAME = "ledgerlite-v18";
+const APP_SHELL = self.registration.scope;
 const ASSETS = [
   APP_SHELL,
   new URL("./styles.css", self.registration.scope).href,
@@ -44,10 +44,11 @@ async function appShellResponse() {
 
   try {
     const response = await fetch(new Request(APP_SHELL, { cache: "reload" }));
-    if (response.ok && !response.redirected) {
+    if (response.ok) {
       const cache = await caches.open(CACHE_NAME);
-      await cache.put(APP_SHELL, response.clone());
-      return cleanHtmlResponse(response);
+      const clean = await cleanHtmlResponse(response);
+      await cache.put(APP_SHELL, clean.clone());
+      return clean;
     }
   } catch (error) {
     // Fall through to the explicit offline response below.
