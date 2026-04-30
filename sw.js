@@ -1,4 +1,4 @@
-const CACHE_NAME = "ledgerlite-v18";
+const CACHE_NAME = "ledgerlite-v19";
 const APP_SHELL = self.registration.scope;
 const ASSETS = [
   APP_SHELL,

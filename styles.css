@@ -249,9 +249,18 @@ h3 {
 .toolbar-actions,
 .inline-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-wrap: nowrap;
+  gap: 4px;
   align-items: center;
+}
+
+.table-action {
+  width: 32px;
+  min-height: 32px;
+  height: 32px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
 }
 
 .search {
@@ -325,12 +334,13 @@ h3 {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 760px;
+  min-width: 680px;
+  font-size: 14px;
 }
 
 th,
 td {
-  padding: 12px 14px;
+  padding: 9px 10px;
   border-bottom: 1px solid var(--line);
   text-align: left;
   vertical-align: top;
@@ -339,7 +349,7 @@ td {
 th {
   background: #f2f6f5;
   color: #41504d;
-  font-size: 12px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0;
 }
@@ -355,11 +365,11 @@ tr:last-child td {
 
 .pill {
   display: inline-flex;
-  min-height: 26px;
+  min-height: 24px;
   align-items: center;
   border-radius: 999px;
-  padding: 0 9px;
-  font-size: 12px;
+  padding: 0 8px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -612,6 +622,67 @@ tr:last-child td {
 
   .view {
     padding: 18px 14px 36px;
+  }
+
+  .table-card {
+    overflow: visible;
+  }
+
+  .table-wrap {
+    overflow: visible;
+  }
+
+  table,
+  thead,
+  tbody,
+  tr,
+  th,
+  td {
+    display: block;
+  }
+
+  table {
+    min-width: 0;
+    font-size: 13px;
+  }
+
+  thead {
+    display: none;
+  }
+
+  tr {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  tr:last-child {
+    border-bottom: 0;
+  }
+
+  td {
+    min-height: 28px;
+    display: grid;
+    grid-template-columns: minmax(88px, 36%) 1fr;
+    gap: 10px;
+    align-items: start;
+    border-bottom: 0;
+    padding: 4px 0;
+  }
+
+  td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  td.amount {
+    text-align: left;
+  }
+
+  .inline-actions {
+    justify-content: flex-start;
   }
 
   .toolbar {

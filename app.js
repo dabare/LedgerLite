@@ -578,9 +578,9 @@ function invoiceTable(invoices, actions = true) {
       statusPill(status),
       actions ? `
         <div class="inline-actions">
-          <button class="secondary" type="button" data-edit-invoice="${invoice.id}">Edit</button>
-          <button class="secondary" type="button" data-pay-invoice="${invoice.id}">Payment</button>
-          <button class="danger" type="button" data-delete-invoice="${invoice.id}">Delete</button>
+          ${actionButton("edit", "Edit invoice", `data-edit-invoice="${invoice.id}"`)}
+          ${actionButton("pay", "Record payment", `data-pay-invoice="${invoice.id}"`)}
+          ${actionButton("delete", "Delete invoice", `data-delete-invoice="${invoice.id}"`, "danger")}
         </div>` : money(invoiceTotal(invoice) - invoicePaid(invoice))
     ];
   }));
@@ -633,10 +633,10 @@ function purchaseTable(purchases, actions = true) {
       statusPill(status),
       actions ? `
         <div class="inline-actions">
-          <button class="secondary" type="button" data-edit-purchase="${purchase.id}">Edit</button>
-          ${purchaseReceiveStatus(purchase) === "Received" ? "" : `<button class="primary" type="button" data-receive-purchase="${purchase.id}">Receive</button>`}
-          <button class="secondary" type="button" data-pay-purchase="${purchase.id}">Payment</button>
-          <button class="danger" type="button" data-delete-purchase="${purchase.id}">Delete</button>
+          ${actionButton("edit", "Edit purchase", `data-edit-purchase="${purchase.id}"`)}
+          ${purchaseReceiveStatus(purchase) === "Received" ? "" : actionButton("receive", "Receive order", `data-receive-purchase="${purchase.id}"`, "primary")}
+          ${actionButton("pay", "Record supplier payment", `data-pay-purchase="${purchase.id}"`)}
+          ${actionButton("delete", "Delete purchase", `data-delete-purchase="${purchase.id}"`, "danger")}
         </div>` : money(purchaseTotal(purchase) - purchasePaid(purchase))
     ];
   }));
@@ -827,7 +827,7 @@ function table(headers, rows) {
     <div class="table-wrap">
       <table>
         <thead><tr>${headers.map(header => `<th>${esc(header)}</th>`).join("")}</tr></thead>
-        <tbody>${rows.map(row => `<tr>${row.map((cell, index) => `<td class="${index > 0 && /amount|total|paid|price|stock|minimum|qty/i.test(headers[index]) ? "amount" : ""}">${cell}</td>`).join("")}</tr>`).join("")}</tbody>
+        <tbody>${rows.map(row => `<tr>${row.map((cell, index) => `<td data-label="${esc(headers[index])}" class="${index > 0 && /amount|total|paid|price|stock|minimum|qty/i.test(headers[index]) ? "amount" : ""}">${cell}</td>`).join("")}</tr>`).join("")}</tbody>
       </table>
     </div>
   `;
@@ -836,10 +836,20 @@ function table(headers, rows) {
 function rowActions(type, id) {
   return `
     <div class="inline-actions">
-      <button class="secondary" type="button" data-edit-${type}="${id}">Edit</button>
-      <button class="danger" type="button" data-delete-${type}="${id}">Delete</button>
+      ${actionButton("edit", `Edit ${type}`, `data-edit-${type}="${id}"`)}
+      ${actionButton("delete", `Delete ${type}`, `data-delete-${type}="${id}"`, "danger")}
     </div>
   `;
+}
+
+function actionButton(icon, label, attrs, tone = "secondary") {
+  const icons = {
+    edit: "✎",
+    delete: "⌫",
+    pay: "$",
+    receive: "✓"
+  };
+  return `<button class="${tone} icon-button table-action" type="button" ${attrs} aria-label="${esc(label)}" title="${esc(label)}">${icons[icon] || "•"}</button>`;
 }
 
 function openModal(title, body, onSubmit) {
