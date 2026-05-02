@@ -1,4 +1,4 @@
-const CACHE_NAME = "ledgerlite-v19";
+const CACHE_NAME = "ledgerlite-v20";
 const APP_SHELL = self.registration.scope;
 const ASSETS = [
   APP_SHELL,
@@ -7,7 +7,10 @@ const ASSETS = [
   new URL("./manifest.webmanifest", self.registration.scope).href,
   new URL("./icons/icon.svg", self.registration.scope).href,
   new URL("./icons/icon-192.png", self.registration.scope).href,
-  new URL("./icons/icon-512.png", self.registration.scope).href
+  new URL("./icons/icon-512.png", self.registration.scope).href,
+  new URL("./icons/apple-touch-icon.png", self.registration.scope).href,
+  new URL("./icons/favicon.png", self.registration.scope).href,
+  new URL("./icons/favicon.ico", self.registration.scope).href
 ];
 
 self.addEventListener("install", event => {
